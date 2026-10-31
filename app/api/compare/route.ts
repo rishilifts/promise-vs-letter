@@ -27,20 +27,20 @@ async function clocked(endpoint: string, body: Record<string, any>): Promise<Clo
 }
 
 const FIELDS: Record<string, { label: string; description: string }> = {
-  salary: { label: "Salary / stipend", description: "salary, stipend, CTC or pay amount with its period" },
-  fees: { label: "Fees / deposit", description: "any fee, deposit or payment the candidate must make, or an explicit statement that none is required" },
-  joining_date: { label: "Joining date", description: "joining or start date" },
-  location: { label: "Work location", description: "work location or office city" },
-  role: { label: "Role / title", description: "job title or role" },
-  training: { label: "Training / probation", description: "training or probation duration and what happens after it" },
-  notice: { label: "Notice period", description: "notice period, bond or exit terms" },
-  benefits: { label: "Other benefits", description: "other material benefits or promises (accommodation, bonus, laptop, visa, etc.)" },
+  salary: { label: "Salary / stipend", description: "the complete sentence(s) stating the salary, stipend, CTC or pay amount, including any condition in the same or the immediately following sentence (such as 'may be revised')" },
+  fees: { label: "Fees / deposit", description: "the complete sentence(s) about any fee, deposit or payment the candidate must make, or an explicit statement that none is required, including any conditions" },
+  joining_date: { label: "Joining date", description: "the complete sentence stating the joining or start date, including any conditions" },
+  location: { label: "Work location", description: "the complete sentence stating the work location or office city, including any conditions" },
+  role: { label: "Role / title", description: "the complete sentence stating the job title or role, including any conditions" },
+  training: { label: "Training / probation", description: "the complete sentence(s) stating the training or probation duration and what happens after it, including any conditions" },
+  notice: { label: "Notice period", description: "the complete sentence(s) stating the notice period, bond or exit terms, including any conditions" },
+  benefits: { label: "Other benefits", description: "complete sentence(s) about other material benefits or promises (accommodation, bonus, laptop, visa, etc.), including any conditions" },
 };
 
 const PROMISE_INSTRUCTIONS =
-  "These are messages or notes recording what a recruiter promised a candidate about a job. Extract exactly what was promised, verbatim where possible. Leave any field that is not mentioned empty.";
+  "These are messages or notes recording what a recruiter promised a candidate about a job. Extract exactly what was promised, verbatim where possible. Always keep any qualifying or conditional words attached to a value (such as 'may be revised', 'subject to performance', 'if applicable', 'expected', 'up to') - never strip a condition from its value. Leave any field that is not mentioned empty.";
 const LETTER_INSTRUCTIONS =
-  "This is a formal offer letter or contract. Extract exactly what the document states, verbatim where possible. Leave any field that is not mentioned empty.";
+  "This is a formal offer letter or contract. Extract exactly what the document states, verbatim where possible. Always keep any qualifying or conditional words attached to a value (such as 'may be revised', 'subject to performance', 'if applicable', 'expected', 'up to') - never strip a condition from its value. Leave any field that is not mentioned empty.";
 
 function fieldsPayload() {
   const out: Record<string, any> = {};
@@ -162,7 +162,7 @@ export async function POST(req: NextRequest) {
           { id: "promise", text: `What the recruiter promised about ${meta.label}: "${pv}"` },
           { id: "letter", text: `What the formal offer letter states about ${meta.label}: "${lv}"` },
         ],
-        instructions: `Decide whether what the recruiter promised about ${meta.label} conflicts with what the offer letter states. A real difference in amount, date, place, duration or obligation is a conflict; wording-only differences are not. Quote both sides exactly.`,
+        instructions: `Decide whether what the recruiter promised about ${meta.label} conflicts with what the offer letter states. A real difference in amount, date, place, duration or obligation is a conflict. A condition or contingency that weakens an otherwise matching value (for example 'may be revised', 'subject to change', 'up to', 'if applicable' on one side but not the other) is also a conflict. Pure wording-only differences are not. Quote both sides exactly.`,
         evidence: "all",
       });
       track(cr);
@@ -177,9 +177,11 @@ export async function POST(req: NextRequest) {
         }
       }
       if (found.length === 0) { agreed.push(meta.label); continue; }
-      for (const f of found) {
-        conflicts.push({ field: meta.label, fieldKey: key, promised: pv, stated: lv, ...f });
-      }
+      // One conflict per field: the compare call can double-report the same
+      // semantic conflict with slightly different quote spans - keep the
+      // highest-confidence one.
+      found.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+      conflicts.push({ field: meta.label, fieldKey: key, promised: pv, stated: lv, ...found[0] });
     }
 
     // 4. Rank conflicts (money / job security first).

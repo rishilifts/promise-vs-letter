@@ -79,13 +79,16 @@ function Results({ r, sample }: { r: any; sample?: boolean }) {
               {c.stated}
             </div>
           </div>
-          <div className="badges">
-            <ExactBadge exact={c.promiseExact ?? null} who="promise line" />
-            <ExactBadge exact={c.letterExact ?? null} who="letter line" />
-            <GroundBadge g={c.promiseGrounded} who="promise side" />
-            <GroundBadge g={c.letterGrounded} who="letter side" />
-          </div>
-          <div className="diag">diagnostic scores (uncalibrated model outputs): match {(c.score ?? 0).toFixed(3)}, promise support {(c.promiseGrounded?.supported ?? 0).toFixed(3)}, letter support {(c.letterGrounded?.supported ?? 0).toFixed(3)}</div>
+          <details className="tech">
+            <summary>technical details (model checks and scores)</summary>
+            <div className="badges">
+              <ExactBadge exact={c.promiseExact ?? null} who="promise line" />
+              <ExactBadge exact={c.letterExact ?? null} who="letter line" />
+              <GroundBadge g={c.promiseGrounded} who="promise side" />
+              <GroundBadge g={c.letterGrounded} who="letter side" />
+            </div>
+            <div className="diag">diagnostic scores (uncalibrated model outputs): match {(c.score ?? 0).toFixed(3)}, promise support {(c.promiseGrounded?.supported ?? 0).toFixed(3)}, letter support {(c.letterGrounded?.supported ?? 0).toFixed(3)}</div>
+          </details>
         </div>
       ))}
       {r.overflowConflicts > 0 && (
@@ -250,17 +253,19 @@ export default function Home() {
               Load synthetic example
             </button>
           </div>
-          {busy && <p className="steps">guard &rarr; extract &rarr; compare &rarr; rank &rarr; verify quotes &rarr; mask report</p>}
-          {error && <div className="err">{error}</div>}
-          {result && <Results r={result} />}
+          <p className="plain-note">
+            What gets checked: salary/stipend, fees/deposit, role/title, joining date, work location, training/probation, notice period - nothing else.
+            Everything you paste or upload is sent to the Clocked API (Rezolve AI) for processing; their retention is unknown to us, so do not upload
+            documents you cannot share with a third party. This app itself stores nothing - your text and files stay in this browser tab and are used only
+            for the check you run. Results are model findings, not proof.
+          </p>
         </>
       )}
       {sampleMode && SAMPLE && <Results r={SAMPLE} sample />}
 
       <div className="foot">
-        Everything you paste or upload is sent to the Clocked API (Rezolve AI) for processing; their data retention is unknown to us -
-        do not upload documents you cannot share with a third party. Only the 7 terms listed above are checked; scores are uncalibrated
-        model outputs; detections are model findings, not proof. Example data is synthetic.
+        Built on the Clocked API (extract, injection check, compare, rerank, grounding, pii). Uploaded content goes to Rezolve AI for processing
+        (retention unknown); this app stores nothing itself. Example data is synthetic.
       </div>
     </main>
   );
