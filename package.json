@@ -13,9 +13,11 @@
     "react-dom": "19.1.0"
   },
   "devDependencies": {
+    "@netlify/plugin-nextjs": "^5.16.5",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "netlify-cli": "^27.16.1",
     "puppeteer-core": "^25.16.0",
     "typescript": "^5"
   }

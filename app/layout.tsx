@@ -11,6 +11,9 @@ export const metadata: Metadata = {
       "The recruiter promised one thing in chat. The offer letter says another. Paste both - detected differences are shown with the lines the model extracted from each side.",
     type: "website",
   },
+  verification: {
+    google: "euzr4pPo4CKLufaESzHMjs7mzcCrLOKirhQ886eVK_w",
+  },
 };
 
 export const viewport: Viewport = {
