@@ -47,10 +47,12 @@ function Results({ r, sample }: { r: any; sample?: boolean }) {
           <div className="big">{r.notInLetter.length + r.newInLetter.length}</div>
           <div className="lbl">one-sided terms</div>
         </div>
-        <div>
-          <div className="big">{r.creditsUsed}</div>
-          <div className="lbl">Clocked credits</div>
-        </div>
+        {r.creditsUsed != null && (
+          <div>
+            <div className="big">{r.creditsUsed}</div>
+            <div className="lbl">Clocked credits</div>
+          </div>
+        )}
       </div>
 
       {r.conflicts.map((c: any, i: number) => (
