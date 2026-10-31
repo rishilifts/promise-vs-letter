@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { checkPerIp, clientIp, reserveDaily, settleReservation } from "../../../lib/limits";
 
 const BASE = "https://clocked.rezolve.ai/clocked";
 const KEY = process.env.CLOCKED_API_KEY || "";
@@ -76,33 +77,18 @@ async function fileToB64(f: File): Promise<string> {
   return buf.toString("base64");
 }
 
-// Best-effort abuse control for the public deployment (module-level state is
-// per serverless instance, so this bounds casual abuse, not a determined one).
-// The Clocked account itself has overage disabled, so spend can never exceed
-// the remaining free trial credits.
-const PER_IP_MAX_RUNS = 5;
-const RATE_WINDOW_MS = 60 * 60 * 1000;
-const DAILY_CREDIT_CAP = Number(process.env.PUBLIC_DAILY_CREDIT_CAP || 800);
-const ipHits = new Map<string, { count: number; reset: number }>();
-let dayStart = Date.now();
-let dayCredits = 0;
-
+// Shared abuse limits persist across instances via Netlify Blobs and fail
+// closed on Netlify when the store is unavailable - see lib/limits.ts.
 export async function POST(req: NextRequest) {
   if (!KEY) return NextResponse.json({ error: "Server is not configured (missing API key)." }, { status: 500 });
-  const ip = (req.headers.get("x-forwarded-for") || "unknown").split(",")[0].trim();
-  const now = Date.now();
-  if (now - dayStart > 24 * 60 * 60 * 1000) { dayStart = now; dayCredits = 0; }
-  if (dayCredits >= DAILY_CREDIT_CAP) {
-    return NextResponse.json({ error: "The public demo's daily limit is reached - it protects a finite free API budget. Please try again tomorrow." }, { status: 429, headers: { "Cache-Control": "no-store" } });
+  const ip = clientIp(req.headers);
+  const perIp = await checkPerIp(ip);
+  if (!perIp.ok) {
+    return NextResponse.json({ error: perIp.error }, { status: perIp.status, headers: { "Cache-Control": "no-store" } });
   }
-  const hit = ipHits.get(ip);
-  if (hit && now < hit.reset && hit.count >= PER_IP_MAX_RUNS) {
-    return NextResponse.json({ error: "Too many checks from this connection - please try again in about an hour." }, { status: 429, headers: { "Cache-Control": "no-store" } });
-  }
-  if (!hit || now >= hit.reset) ipHits.set(ip, { count: 1, reset: now + RATE_WINDOW_MS });
-  else hit.count += 1;
   let totalCredits = 0;
-  const track = (r: ClockResult) => { totalCredits += r.credits || 0; dayCredits += r.credits || 0; };
+  let reservationKey: string | null = null;
+  const track = (r: ClockResult) => { totalCredits += r.credits || 0; };
   try {
     const form = await req.formData();
     const promiseText = String(form.get("promiseText") || "").slice(0, MAX_TEXT);
@@ -133,6 +119,14 @@ export async function POST(req: NextRequest) {
     if (!hasPromise || !hasLetter) {
       return NextResponse.json({ error: "Both sides are needed: what was promised, and the offer letter." }, { status: 400 });
     }
+
+    // Reserve the worst-case cost of this run against the daily budget
+    // before any paid call; reconciled to actual spend in the finally below.
+    const reservation = await reserveDaily();
+    if (!reservation.ok) {
+      return NextResponse.json({ error: reservation.error }, { status: reservation.status, headers: { "Cache-Control": "no-store" } });
+    }
+    reservationKey = reservation.dayKey;
 
     // 1. Guard text inputs (fail-closed). Image input is guarded as an image.
     if (promiseText.trim()) {
@@ -287,5 +281,7 @@ export async function POST(req: NextRequest) {
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "Comparison failed." }, { status: 502 });
+  } finally {
+    if (reservationKey) await settleReservation(reservationKey, totalCredits);
   }
 }

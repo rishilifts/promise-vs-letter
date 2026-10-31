@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3810"),
+  alternates: { canonical: "/" },
   title: "Promise vs Letter - check the offer letter against what was promised",
   description:
     "The recruiter promised one thing in chat. The offer letter says another. Paste both - detected differences are shown with the lines the model extracted from each side, checked against their source.",
