@@ -35,9 +35,9 @@ h1 { font-size: clamp(28px, 6vw, 40px); line-height: 1.1; margin: 6px 0 10px; fo
 .tab.active { background: var(--ink); color: #fff; border-color: var(--ink); }
 textarea { width: 100%; min-height: 170px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 14px; font-family: Menlo, Consolas, monospace; line-height: 1.5; resize: vertical; background: #fffdf9; color: var(--ink); }
 textarea:focus { outline: 2px solid #c9c2b4; }
-.drop { border: 1.5px dashed #cfc8b8; border-radius: 8px; padding: 22px 14px; text-align: center; font-size: 14px; color: var(--ink-soft); cursor: pointer; background: #fffdf9; }
+.drop { display: block; border: 1.5px dashed #cfc8b8; border-radius: 8px; padding: 22px 14px; text-align: center; font-size: 14px; color: var(--ink-soft); cursor: pointer; background: #fffdf9; }
 .drop:hover { border-color: var(--ink); }
-.drop .fname { color: var(--ink); font-weight: 600; display: block; margin-top: 6px; }
+.drop .fname { color: var(--ink); font-weight: 600; display: block; margin-top: 6px; overflow-wrap: anywhere; }
 .actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 8px 0 30px; }
 button.primary { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 12px 26px; font-size: 16px; cursor: pointer; font-family: inherit; }
 button.primary:disabled { opacity: 0.5; cursor: default; }

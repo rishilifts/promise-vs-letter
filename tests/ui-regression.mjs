@@ -133,6 +133,36 @@ try {
   check("mobile: no page JS errors", mobErrors.length === 0);
   await page.screenshot({ path: `${ART}/mobile-results.png`, fullPage: true });
   await page.close();
+
+  // D: file-selected chip layout - long filename stays inside the drop zone
+  const longName = "very-long-filename-offer-letter-final-2026-october-revised-v2.pdf";
+  fs.writeFileSync(`${ART}/${longName}`, "not a real pdf - layout probe only");
+  for (const vp of [{ width: 1280, height: 900, tag: "desktop" }, { width: 390, height: 844, tag: "mobile" }]) {
+    page = await browser.newPage();
+    await page.setViewport(vp);
+    await attachMock(page);
+    await page.goto(BASE, { waitUntil: "networkidle0" });
+    // open the letter panel PDF tab, then set the file on the hidden input
+    const tabs = await page.$$(".panel:nth-of-type(2) .tab, .panel ~ .panel .tab");
+    await page.evaluate(() => {
+      const panels = document.querySelectorAll(".panel");
+      const pdfTab = [...panels[1].querySelectorAll(".tab")].find((b) => b.textContent.trim() === "PDF");
+      pdfTab.click();
+    });
+    await page.waitForSelector(".panel .drop input[type=file]", { timeout: 5000 });
+    const inputs = await page.$$(".drop input[type=file]");
+    await inputs[inputs.length - 1].uploadFile(`${ART}/${longName}`);
+    await page.waitForSelector(".drop .fname", { timeout: 5000 });
+    const geom = await page.evaluate(() => {
+      const drop = document.querySelector(".drop").getBoundingClientRect();
+      const fname = document.querySelector(".drop .fname").getBoundingClientRect();
+      return { drop: { l: drop.left, r: drop.right, t: drop.top, b: drop.bottom }, fname: { l: fname.left, r: fname.right, t: fname.top, b: fname.bottom }, overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+    });
+    check(`${vp.tag}: filename inside drop zone`, geom.fname.l >= geom.drop.l - 1 && geom.fname.r <= geom.drop.r + 1 && geom.fname.t >= geom.drop.t - 1 && geom.fname.b <= geom.drop.b + 1);
+    check(`${vp.tag}: no horizontal overflow with long filename`, geom.overflowX <= 1);
+    await page.screenshot({ path: `${ART}/${vp.tag}-filechip.png`, fullPage: true });
+    await page.close();
+  }
 } finally {
   await browser.close();
   dev.kill();
