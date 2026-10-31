@@ -30,7 +30,7 @@
 // Hard backstop below all of this: the Clocked account is a free trial with
 // overage disabled and no payment method, so spend can never cost money.
 
-export const PER_IP_MAX_RUNS = 5;
+export const PER_IP_MAX_RUNS = 10; // raised 5 -> 10 on 2026-10-31 per user request; GAS backend updated to match
 export const DAILY_CREDIT_CAP = Number(process.env.PUBLIC_DAILY_CREDIT_CAP || 800);
 export const WORST_CASE_RUN_CREDITS = 200;
 
