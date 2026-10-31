@@ -253,6 +253,8 @@ export default function Home() {
               Load synthetic example
             </button>
           </div>
+          {error && <div className="err">{error}</div>}
+          {result && <Results r={result} />}
           <p className="plain-note">
             What gets checked: salary/stipend, fees/deposit, role/title, joining date, work location, training/probation, notice period - nothing else.
             Everything you paste or upload is sent to the Clocked API (Rezolve AI) for processing; their retention is unknown to us, so do not upload
