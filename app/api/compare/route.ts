@@ -77,23 +77,11 @@ async function fileToB64(f: File): Promise<string> {
   return buf.toString("base64");
 }
 
-// Shared abuse limits persist across instances via Netlify Blobs and fail
-// closed on Netlify when the store is unavailable - see lib/limits.ts.
+// Shared abuse limits are serialized by a Google Apps Script web app
+// (LockService) and fail closed when the limiter is unavailable - see
+// lib/limits.ts. Live processing is open to the public under those limits.
 export async function POST(req: NextRequest) {
   if (!KEY) return NextResponse.json({ error: "Server is not configured (missing API key)." }, { status: 500 });
-  // Live processing is restricted to owner-authorized testing: the shared
-  // counter store's conditional writes are not honored atomically by the
-  // hosting backend (verified 2026-10-31), so no free reliable atomic daily
-  // cap exists. Public visitors get the synthetic demo; the per-IP and daily
-  // limiters below still guard key-holder traffic as best-effort defense in
-  // depth, and the Clocked trial account (overage off) remains the hard floor.
-  const ownerKey = process.env.OWNER_ACCESS_KEY || "";
-  if (!ownerKey || req.headers.get("x-owner-key") !== ownerKey) {
-    return NextResponse.json(
-      { error: "Live checking is paused on this public demo. Load the synthetic example to see how it works." },
-      { status: 403, headers: { "Cache-Control": "no-store" } },
-    );
-  }
   const ip = clientIp(req.headers);
   const perIp = await checkPerIp(ip);
   if (!perIp.ok) {

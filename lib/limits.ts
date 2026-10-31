@@ -1,16 +1,18 @@
-import { getStore, type Store } from "@netlify/blobs";
-
 // Shared abuse limits for the public deployment.
 //
-// Atomicity: all counter updates are compare-and-swap against Netlify Blobs
-// (strong-consistency read of value+etag, conditional write with onlyIfMatch /
-// onlyIfNew, retry on conflict). No read-modify-write races: two concurrent
-// writers cannot both succeed on the same etag, so no lost updates and the
-// daily budget check-and-reserve is a single atomic step. Sustained
-// contention or a store error fails CLOSED (the request is rejected), never
-// falls back to per-instance memory on Netlify. The in-memory store below
-// implements the same CAS semantics and is used only off-Netlify (local dev
-// and tests).
+// Backend: a Google Apps Script web app (APPS_SCRIPT_LIMITS_URL). Every
+// counter mutation is one POST; the script serializes ALL mutations with
+// LockService.getScriptLock() and stores state in ScriptProperties, so
+// check-and-reserve is genuinely atomic across instances with no
+// read-modify-write race (Netlify Blobs conditional writes were verified
+// not honored on 2026-10-31 and are no longer used). Any error or timeout
+// from the limiter fails CLOSED (the request is rejected). Off-Netlify
+// (local dev/tests) an in-memory store with the same semantics is used.
+//
+// Cross-process proof (2026-10-31, real web app, 0 Clocked calls):
+// 3 processes x 8 concurrent reserves at cap 800/reserve 200 admitted
+// exactly 4 (reserved=800); settle 4x59 reconciled to reserved=0/used=236;
+// 8 concurrent per-IP counts admitted exactly 5 (hourly max).
 //
 // Client IP: Netlify sets x-nf-client-connection-ip at the edge and strips
 // client-supplied values, so it is preferred over the spoofable
@@ -32,113 +34,70 @@ export const PER_IP_MAX_RUNS = 5;
 export const DAILY_CREDIT_CAP = Number(process.env.PUBLIC_DAILY_CREDIT_CAP || 800);
 export const WORST_CASE_RUN_CREDITS = 200;
 
-const STORE_NAME = process.env.LIMITS_STORE_NAME || "public-limits";
-const RETRIES = 8;
+const LIMITS_URL = process.env.APPS_SCRIPT_LIMITS_URL || "";
+const LIMITS_SECRET = process.env.APPS_SCRIPT_LIMITS_SECRET || "";
+const FETCH_TIMEOUT_MS = 10000;
 
 type DayDoc = { reserved: number; used: number };
-type IpDoc = { count: number };
+type LimitResultOk = { ok: true; dayKey: string };
+export type LimitResult = LimitResultOk | { ok: false; status: number; error: string };
 
-// ---- store access ---------------------------------------------------------
+const dayKey = (now: Date) => `day-${now.toISOString().slice(0, 10)}`;
 
-interface CasStore {
-  getJson(key: string): Promise<{ data: any; etag?: string } | null>;
-  setJson(key: string, data: unknown, onlyIfMatch?: string, onlyIfNew?: boolean): Promise<boolean>;
+// ---- Apps Script backend ---------------------------------------------------
+
+// One serialized action per call. Returns the script's JSON body, or null on
+// any network/parse failure (callers fail closed).
+async function gasCall(payload: Record<string, unknown>): Promise<any | null> {
+  if (!LIMITS_URL || !LIMITS_SECRET) return null;
+  try {
+    const res = await fetch(LIMITS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, secret: LIMITS_SECRET }),
+      redirect: "follow", // 302 to script.googleusercontent.com becomes GET per spec
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      cache: "no-store",
+    });
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
-class MemoryStore implements CasStore {
-  private map = new Map<string, { data: string; etag: string }>();
-  async getJson(key: string) {
-    const e = this.map.get(key);
-    return e ? { data: JSON.parse(e.data), etag: e.etag } : null;
-  }
-  // check-and-set runs to completion synchronously, so it is atomic across
-  // async callers - the same semantics the real backend provides per write.
-  async setJson(key: string, data: unknown, onlyIfMatch?: string, onlyIfNew?: boolean) {
-    const cur = this.map.get(key);
-    if (onlyIfNew && cur) return false;
-    if (onlyIfMatch !== undefined && (!cur || cur.etag !== onlyIfMatch)) return false;
-    this.map.set(key, { data: JSON.stringify(data), etag: crypto.randomUUID() });
+// ---- in-memory backend (local dev/tests only) ------------------------------
+
+class MemoryStore {
+  private days = new Map<string, DayDoc>();
+  private ips = new Map<string, number>();
+  // each method runs to completion synchronously: atomic across async callers
+  perip(key: string): boolean {
+    const c = this.ips.get(key) || 0;
+    if (c >= PER_IP_MAX_RUNS) return false;
+    this.ips.set(key, c + 1);
     return true;
   }
-}
-
-class BlobsStore implements CasStore {
-  constructor(private s: Store) {}
-  async getJson(key: string) {
-    const r = await this.s.getWithMetadata(key, { type: "json", consistency: "strong" });
-    return r ? { data: r.data, etag: r.etag } : null;
+  reserve(key: string): boolean {
+    const d = this.days.get(key) || { reserved: 0, used: 0 };
+    if (d.used + d.reserved + WORST_CASE_RUN_CREDITS > DAILY_CREDIT_CAP) return false;
+    d.reserved += WORST_CASE_RUN_CREDITS;
+    this.days.set(key, d);
+    return true;
   }
-  async setJson(key: string, data: unknown, onlyIfMatch?: string, onlyIfNew?: boolean) {
-    const opts = onlyIfMatch !== undefined ? { onlyIfMatch } : onlyIfNew ? { onlyIfNew: true } : {};
-    const wr = await this.s.setJSON(key, data, opts as any);
-    if (!wr.modified) return false;
-    // The SDK reports modified:true for ANY non-412 status when conditions
-    // are set, so verify the write really landed before trusting it.
-    const check = await this.getJson(key);
-    return !!check && JSON.stringify(check.data) === JSON.stringify(data);
+  settle(key: string, credits: number): void {
+    const d = this.days.get(key) || { reserved: 0, used: 0 };
+    d.reserved = Math.max(0, d.reserved - WORST_CASE_RUN_CREDITS);
+    d.used += Math.max(0, credits);
+    this.days.set(key, d);
+  }
+  read(key: string): DayDoc | null {
+    return this.days.get(key) ?? null;
   }
 }
+const mem = new MemoryStore();
+const useGas = () => process.env.NETLIFY === "true" || (!!LIMITS_URL && !!LIMITS_SECRET);
 
-const memStores = new Map<string, MemoryStore>();
-const blobStores = new Map<string, CasStore | null>();
-
-function store(name?: string): CasStore | null {
-  const storeName = name || STORE_NAME;
-  const hit = blobStores.get(storeName);
-  if (hit !== undefined) return hit;
-  let s: CasStore | null;
-  try {
-    const opts: Record<string, any> = { name: storeName, consistency: "strong" };
-    if (process.env.NETLIFY_BLOBS_SITE_ID && process.env.NETLIFY_BLOBS_TOKEN) {
-      opts.siteID = process.env.NETLIFY_BLOBS_SITE_ID;
-      opts.token = process.env.NETLIFY_BLOBS_TOKEN;
-    }
-    s = new BlobsStore(getStore(opts as any));
-  } catch {
-    if (process.env.NETLIFY === "true") {
-      s = null;
-    } else {
-      let m = memStores.get(storeName);
-      if (!m) { m = new MemoryStore(); memStores.set(storeName, m); }
-      s = m;
-    }
-  }
-  blobStores.set(storeName, s);
-  return s;
-}
-
-const onNetlify = () => process.env.NETLIFY === "true";
-
-// ---- atomic update helper -------------------------------------------------
-
-type Outcome = "ok" | "rejected" | "unavailable";
-
-async function casUpdate<T>(key: string, init: T, fn: (cur: T) => T | null, storeName?: string): Promise<Outcome> {
-  const s = store(storeName);
-  if (!s) return "unavailable";
-  for (let i = 0; i < RETRIES; i++) {
-    let cur: T, etag: string | undefined;
-    try {
-      const res = await s.getJson(key);
-      cur = res ? (res.data as T) : init;
-      etag = res?.etag;
-    } catch {
-      return "unavailable";
-    }
-    const next = fn(cur);
-    if (next === null) return "rejected";
-    try {
-      const ok = etag !== undefined ? await s.setJson(key, next, etag) : await s.setJson(key, next, undefined, true);
-      if (ok) return "ok";
-    } catch {
-      return "unavailable";
-    }
-    await new Promise((r) => setTimeout(r, 25 + Math.random() * 60 * (i + 1)));
-  }
-  return "unavailable"; // sustained contention - fail closed
-}
-
-// ---- public API -----------------------------------------------------------
+// ---- public API ------------------------------------------------------------
 
 export function clientIp(headers: Headers): string {
   const nf = headers.get("x-nf-client-connection-ip");
@@ -148,51 +107,46 @@ export function clientIp(headers: Headers): string {
   return "unknown";
 }
 
-const clean = (s: string) => s.replace(/[^a-zA-Z0-9-]/g, "_").slice(0, 120);
-const dayKey = (now: Date) => `day-${now.toISOString().slice(0, 10)}`;
-const ipKey = (ip: string, now: Date) => `ip-${clean(ip)}-${now.toISOString().slice(0, 13)}`;
-
-export type LimitResult =
-  | { ok: true; dayKey: string }
-  | { ok: false; status: number; error: string };
-
-const fail = (o: Outcome, rejected: LimitResult): LimitResult =>
-  o === "rejected" ? rejected : { ok: false, status: 503, error: "Service temporarily unavailable." };
+const unavailable = (): LimitResult => ({ ok: false, status: 503, error: "Service temporarily unavailable." });
 
 // Counts one attempt against the per-IP hourly window. Call for every
 // request, including ones that fail validation.
-export async function checkPerIp(ip: string, now = new Date(), storeName?: string): Promise<LimitResult> {
-  const key = ipKey(ip, now);
-  const o = await casUpdate<IpDoc>(key, { count: 0 }, (d) => (d.count >= PER_IP_MAX_RUNS ? null : { count: d.count + 1 }), storeName);
-  if (o === "ok") return { ok: true, dayKey: dayKey(now) };
-  return fail(o, { ok: false, status: 429, error: "Too many checks from this connection - please try again in about an hour." });
+export async function checkPerIp(ip: string, now = new Date()): Promise<LimitResult> {
+  if (useGas()) {
+    const r = await gasCall({ action: "perip", ip });
+    if (!r) return unavailable();
+    if (r.ok) return { ok: true, dayKey: dayKey(now) };
+    return { ok: false, status: r.status || 429, error: r.error || "Too many checks from this connection - please try again in about an hour." };
+  }
+  const key = `ip-${ip}-${now.toISOString().slice(0, 13)}`;
+  return mem.perip(key) ? { ok: true, dayKey: dayKey(now) } : { ok: false, status: 429, error: "Too many checks from this connection - please try again in about an hour." };
 }
 
 // Atomically checks the daily budget and reserves the worst-case run cost.
 // Call only after validation; reconcile with settleReservation.
-export async function reserveDaily(now = new Date(), storeName?: string): Promise<LimitResult> {
+export async function reserveDaily(now = new Date()): Promise<LimitResult> {
+  if (useGas()) {
+    const r = await gasCall({ action: "reserve" });
+    if (!r) return unavailable();
+    if (r.ok) return { ok: true, dayKey: r.dayKey || dayKey(now) };
+    return { ok: false, status: r.status || 429, error: r.error || "The public demo's daily limit is reached - it protects a finite free API budget. Please try again tomorrow." };
+  }
   const key = dayKey(now);
-  const o = await casUpdate<DayDoc>(key, { reserved: 0, used: 0 }, (d) =>
-    d.used + d.reserved + WORST_CASE_RUN_CREDITS > DAILY_CREDIT_CAP
-      ? null
-      : { reserved: d.reserved + WORST_CASE_RUN_CREDITS, used: d.used },
-  storeName);
-  if (o === "ok") return { ok: true, dayKey: key };
-  return fail(o, { ok: false, status: 429, error: "The public demo's daily limit is reached - it protects a finite free API budget. Please try again tomorrow." });
+  return mem.reserve(key) ? { ok: true, dayKey: key } : { ok: false, status: 429, error: "The public demo's daily limit is reached - it protects a finite free API budget. Please try again tomorrow." };
 }
 
-export async function settleReservation(key: string, actualCredits: number, storeName?: string): Promise<void> {
-  await casUpdate<DayDoc>(key, { reserved: 0, used: 0 }, (d) => ({
-    reserved: Math.max(0, d.reserved - WORST_CASE_RUN_CREDITS),
-    used: d.used + Math.max(0, actualCredits),
-  }), storeName);
-  // A failed settle leaves the reservation in place until the UTC day
-  // resets, which fails safe (tighter budget).
+export async function settleReservation(key: string, actualCredits: number): Promise<void> {
+  if (useGas()) {
+    await gasCall({ action: "settle", dayKey: key, credits: actualCredits });
+    // A failed settle leaves the reservation in place until the UTC day
+    // resets, which fails safe (tighter budget).
+    return;
+  }
+  mem.settle(key, actualCredits);
 }
 
 // Test-only: read the raw counters.
-export async function debugRead(key: string, storeName?: string): Promise<any> {
-  const s = store(storeName);
-  if (!s) return null;
-  return (await s.getJson(key))?.data ?? null;
+export async function debugRead(key: string): Promise<any> {
+  if (useGas()) return (await gasCall({ action: "read" }))?.day ?? null;
+  return mem.read(key);
 }
