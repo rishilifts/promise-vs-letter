@@ -1,7 +1,7 @@
-export const SAMPLE_LABEL = "Example result - synthetic recruiter chat and offer letter created for this demo. Not real documents.";
-
 // Recorded live API run on the synthetic example (regenerate after verified runs).
 // Shown only under ?sample=1, always labeled as a recorded sample, never as a fresh result.
+export const SAMPLE_LABEL = "Example result - synthetic recruiter chat and offer letter created for this demo. Not real documents.";
+
 export const SAMPLE: any = {
   "conflicts": [
     {
@@ -12,6 +12,8 @@ export const SAMPLE: any = {
       "promiseQuote": "What the recruiter promised about Salary / stipend: \"Rs 15,000/month\"",
       "letterQuote": "What the formal offer letter states about Salary / stipend: \"Rs 9,000 per month\"",
       "score": 0.9992,
+      "promiseExact": true,
+      "letterExact": true,
       "promiseGrounded": {
         "verdict": "supported",
         "supported": 0.9953
@@ -29,6 +31,8 @@ export const SAMPLE: any = {
       "promiseQuote": "What the recruiter promised about Fees / deposit: \"no fees or deposit\"",
       "letterQuote": "What the formal offer letter states about Fees / deposit: \"Rs 2,000\"",
       "score": 0.9985,
+      "promiseExact": true,
+      "letterExact": true,
       "promiseGrounded": {
         "verdict": "supported",
         "supported": 0.9954
@@ -46,6 +50,8 @@ export const SAMPLE: any = {
       "promiseQuote": "What the recruiter promised about Training / probation: \"3 months training, then permanent role\"",
       "letterQuote": "What the formal offer letter states about Training / probation: \"training period of 6 months\"",
       "score": 0.9991,
+      "promiseExact": true,
+      "letterExact": true,
       "promiseGrounded": {
         "verdict": "supported",
         "supported": 0.9953
@@ -63,6 +69,8 @@ export const SAMPLE: any = {
       "promiseQuote": "What the recruiter promised about Work location: \"Bengaluru\"",
       "letterQuote": "What the formal offer letter states about Work location: \"Hyderabad\"",
       "score": 0.999,
+      "promiseExact": true,
+      "letterExact": true,
       "promiseGrounded": {
         "verdict": "supported",
         "supported": 0.9956
@@ -80,6 +88,8 @@ export const SAMPLE: any = {
       "promiseQuote": "What the recruiter promised about Joining date: \"5 Jan 2026\"",
       "letterQuote": "What the formal offer letter states about Joining date: \"1 February 2026\"",
       "score": 0.999,
+      "promiseExact": true,
+      "letterExact": true,
       "promiseGrounded": {
         "verdict": "supported",
         "supported": 0.9946
@@ -97,6 +107,8 @@ export const SAMPLE: any = {
       "promiseQuote": "What the recruiter promised about Role / title: \"Junior Analyst\"",
       "letterQuote": "What the formal offer letter states about Role / title: \"Support Associate\"",
       "score": 0.9467,
+      "promiseExact": true,
+      "letterExact": true,
       "promiseGrounded": {
         "verdict": "supported",
         "supported": 0.9954

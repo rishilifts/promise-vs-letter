@@ -92,6 +92,19 @@ export async function POST(req: NextRequest) {
     const promisePdfB64 = promisePdf instanceof File && promisePdf.size > 0 ? await fileToB64(promisePdf) : null;
     const letterPdfB64 = letterPdf instanceof File && letterPdf.size > 0 ? await fileToB64(letterPdf) : null;
 
+    // Validate uploads before any paid call.
+    const MAX_BYTES = 10 * 1024 * 1024;
+    if (promiseImage instanceof File && promiseImage.size > 0) {
+      if (!["image/png", "image/jpeg", "image/webp"].includes(promiseImage.type)) return NextResponse.json({ error: "Screenshot must be a PNG, JPEG or WebP image." }, { status: 400 });
+      if (promiseImage.size > MAX_BYTES) return NextResponse.json({ error: "Screenshot is too large (10 MB max)." }, { status: 400 });
+    }
+    for (const f of [promisePdf, letterPdf]) {
+      if (f instanceof File && f.size > 0) {
+        if (f.type !== "application/pdf") return NextResponse.json({ error: "Letter upload must be a PDF file." }, { status: 400 });
+        if (f.size > MAX_BYTES) return NextResponse.json({ error: "PDF is too large (10 MB max)." }, { status: 400 });
+      }
+    }
+
     const hasPromise = promiseText.trim() || promiseImgUrl || promisePdfB64;
     const hasLetter = letterText.trim() || letterPdfB64;
     if (!hasPromise || !hasLetter) {
@@ -185,6 +198,10 @@ export async function POST(req: NextRequest) {
     // 5. Verify each side's quote against its own source (cap at 8 conflicts).
     const capped = ranked.slice(0, 8);
     for (const c of capped) {
+      // Deterministic verbatim check: is the displayed value a literal substring
+      // of the pasted source text? (null = source was a file upload, no raw text)
+      c.promiseExact = promiseText.trim() ? promiseText.includes(c.promised) : null;
+      c.letterExact = letterText.trim() ? letterText.includes(c.stated) : null;
       const pClaim = `The recruiter promised about ${c.field}: "${c.promised}"`;
       const lClaim = `The offer letter states about ${c.field}: "${c.stated}"`;
       const pSrc: Record<string, any> = promiseImgUrl
@@ -205,31 +222,6 @@ export async function POST(req: NextRequest) {
         const cl = gl.data?.claims?.[0];
         c.letterGrounded = cl ? { verdict: cl.verdict, supported: cl.supported } : null;
       } catch { c.letterGrounded = null; }
-    }
-
-    // 5b. Highlighted PDF of the letter (only when the letter was a PDF upload).
-    // Note: the highlighting pass is a single whole-document compare; it can miss
-    // a conflict that the per-field pass above caught, so it is labeled as such.
-    let markedPdf: string | null = null;
-    if (letterPdfB64) {
-      try {
-        const pSide = promiseText.trim() || Object.entries(pFields).map(([k, v]) => `${k}: ${v}`).join("\n");
-        const mc = await clocked("compare", {
-          documents: [
-            { id: "promise", text: pSide },
-            { id: "letter", pdf: letterPdfB64 },
-          ],
-          instructions: "Document 1 is the recruiter's chat promise, document 2 is the formal offer letter. Flag every conflict in money, dates, role, location, or terms, quoting both sides.",
-          evidence: "all",
-          return_pdf: "highlight",
-        });
-        track(mc);
-        const pdfObj: any = mc.data?.pdf;
-        const objs: any[] = Array.isArray(pdfObj) ? pdfObj : pdfObj ? [pdfObj] : [];
-        for (const o of objs) {
-          if (typeof o?.marked?.document === "string") { markedPdf = o.marked.document; break; }
-        }
-      } catch { markedPdf = null; }
     }
 
     // 6. Build the report, then mask personal details for sharing.
@@ -266,7 +258,6 @@ export async function POST(req: NextRequest) {
       report,
       maskedReport,
       maskedEntities,
-      markedPdf,
       creditsUsed: totalCredits,
     });
   } catch (err: any) {

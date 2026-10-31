@@ -46,8 +46,9 @@ button.ghost { background: none; border: 1px solid var(--line); border-radius: 8
 .summary { display: flex; flex-wrap: wrap; gap: 18px; align-items: baseline; border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line); padding: 14px 0; margin: 26px 0 20px; }
 .summary .big { font-size: 30px; font-weight: 600; }
 .summary .lbl { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); font-family: Menlo, Consolas, monospace; }
-.card { background: #fff; border: 1px solid var(--line); border-left: 4px solid var(--letter); border-radius: 8px; padding: 16px 18px; margin-bottom: 14px; }
-.card .field { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); font-family: Menlo, Consolas, monospace; }
+.diffrow { border-top: 1px solid var(--line); padding: 16px 0 14px; }
+.diffrow:first-of-type { border-top: none; }
+.diffrow .field { font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); font-family: Menlo, Consolas, monospace; }
 .vs { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 10px 0; }
 @media (min-width: 700px) { .vs { grid-template-columns: 1fr 1fr; } }
 .side { border-radius: 8px; padding: 10px 12px; font-size: 14.5px; }
@@ -56,6 +57,7 @@ button.ghost { background: none; border: 1px solid var(--line); border-radius: 8
 .side.promise .who { color: var(--promise); }
 .side.letter { background: var(--letter-bg); }
 .side.letter .who { color: var(--letter); }
+.diag { font-size: 11.5px; color: var(--ink-soft); font-family: Menlo, Consolas, monospace; margin-top: 6px; }
 .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .badge { font-size: 12px; font-family: Menlo, Consolas, monospace; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; color: var(--ink-soft); background: #fff; }
 .badge.ok { color: var(--promise); border-color: #bcd9c4; background: var(--promise-bg); }

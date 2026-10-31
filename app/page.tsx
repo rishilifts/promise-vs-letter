@@ -27,10 +27,16 @@ Sincerely,
 Priya Sharma, HR Manager`;
 
 function GroundBadge({ g, who }: { g: any; who: string }) {
-  if (!g) return <span className="badge warn">{who}: not verified</span>;
+  if (!g) return <span className="badge warn">{who}: model check unavailable</span>;
   if (g.verdict === "supported")
-    return <span className="badge ok">{who} verified ({Math.round((g.supported || 0) * 1000) / 10}%)</span>;
-  return <span className="badge warn">{who}: {g.verdict}</span>;
+    return <span className="badge">{who}: model check says supported by source</span>;
+  return <span className="badge warn">{who}: model check says {g.verdict}</span>;
+}
+
+function ExactBadge({ exact, who }: { exact: boolean | null; who: string }) {
+  if (exact === true) return <span className="badge ok">{who}: exact substring of your pasted text</span>;
+  if (exact === false) return <span className="badge warn">{who}: model-extracted value, not a verbatim substring</span>;
+  return <span className="badge">{who}: from file upload, no verbatim check</span>;
 }
 
 function Results({ r, sample }: { r: any; sample?: boolean }) {
@@ -55,9 +61,14 @@ function Results({ r, sample }: { r: any; sample?: boolean }) {
         )}
       </div>
 
+      <div className="steps" style={{ marginBottom: 18 }}>
+        Only these terms are checked: salary/stipend, fees/deposit, role/title, joining date, work location,
+        training/probation, notice period. Any other term in the documents is not compared.
+      </div>
+
       {r.conflicts.map((c: any, i: number) => (
-        <div className="card" key={i}>
-          <div className="field">Conflict {i + 1} · {c.field}</div>
+        <div className="diffrow" key={i}>
+          <div className="field">Detected difference {i + 1} · {c.field}</div>
           <div className="vs">
             <div className="side promise">
               <span className="who">Promised</span>
@@ -69,10 +80,12 @@ function Results({ r, sample }: { r: any; sample?: boolean }) {
             </div>
           </div>
           <div className="badges">
-            <GroundBadge g={c.promiseGrounded} who="promise quote" />
-            <GroundBadge g={c.letterGrounded} who="letter quote" />
-            <span className="badge">match score {Math.round((c.score || 0) * 1000) / 10}% (uncalibrated)</span>
+            <ExactBadge exact={c.promiseExact ?? null} who="promise line" />
+            <ExactBadge exact={c.letterExact ?? null} who="letter line" />
+            <GroundBadge g={c.promiseGrounded} who="promise side" />
+            <GroundBadge g={c.letterGrounded} who="letter side" />
           </div>
+          <div className="diag">diagnostic scores (uncalibrated model outputs): match {(c.score ?? 0).toFixed(3)}, promise support {(c.promiseGrounded?.supported ?? 0).toFixed(3)}, letter support {(c.letterGrounded?.supported ?? 0).toFixed(3)}</div>
         </div>
       ))}
       {r.overflowConflicts > 0 && (
@@ -97,7 +110,12 @@ function Results({ r, sample }: { r: any; sample?: boolean }) {
         <div className="list-block">No conflicts detected between the two documents. This does not prove the letter is fair - only that no difference was detected.</div>
       )}
 
-      <h3 style={{ margin: "26px 0 8px" }}>Shareable report (personal details masked)</h3>
+      <h3 style={{ margin: "26px 0 8px" }}>Shareable report</h3>
+      <div className="steps" style={{ marginBottom: 8 }}>
+        {Object.keys(r.maskedEntities || {}).length > 0
+          ? `Personal details found in the report were masked: ${Object.entries(r.maskedEntities).map(([k, v]) => `${v} ${k}`).join(", ")}. Check the text yourself before sharing - masking is a model pass, not a guarantee.`
+          : "No personal details were detected in this report text. Check it yourself before sharing - absence of a detection is not proof of absence."}
+      </div>
       <div className="report">{r.maskedReport}</div>
       <div className="actions">
         <button
@@ -111,27 +129,10 @@ function Results({ r, sample }: { r: any; sample?: boolean }) {
         >
           {copied ? "Copied" : "Copy report"}
         </button>
-        {r.markedPdf && (
-          <a
-            className="ghost"
-            style={{ textDecoration: "none", display: "inline-block" }}
-            href={`data:application/pdf;base64,${r.markedPdf}`}
-            download="letter-highlighted.pdf"
-          >
-            Highlighted letter (PDF)
-          </a>
-        )}
         {Object.keys(r.maskedEntities || {}).length > 0 && (
           <span className="steps">masked: {Object.entries(r.maskedEntities).map(([k, v]) => `${v} ${k}`).join(", ")}</span>
         )}
       </div>
-
-      {r.markedPdf && (
-        <div className="note">
-          The highlighted letter comes from a single whole-document pass and may not mark every conflict listed above - the list is the
-          authoritative result.
-        </div>
-      )}
 
       <div className="note">
         Detected items only: a &quot;not detected&quot; result does not prove a term is fair, present or absent. Scores are uncalibrated model
@@ -218,8 +219,8 @@ export default function Home() {
       <div className="eyebrow">Clocked Build Challenge</div>
       <h1>Promise vs Letter</h1>
       <p className="sub">
-        The recruiter promised one thing in chat. The offer letter says another. Paste both - get every detected conflict with the exact
-        lines from each side, each quote verified against its own document.
+        The recruiter promised one thing in chat. The offer letter says another. Paste both - detected differences are shown with the lines the model extracted from each side, checked against
+        their source, and string-matched when you paste text.
       </p>
 
       {!sampleMode && (
@@ -257,8 +258,9 @@ export default function Home() {
       {sampleMode && SAMPLE && <Results r={SAMPLE} sample />}
 
       <div className="foot">
-        Built on the Clocked API (extract &middot; injection &middot; compare &middot; rerank &middot; grounding &middot; pii). Documents are
-        processed to produce this report; scores are uncalibrated model scores. Example data is synthetic.
+        Everything you paste or upload is sent to the Clocked API (Rezolve AI) for processing; their data retention is unknown to us -
+        do not upload documents you cannot share with a third party. Only the 7 terms listed above are checked; scores are uncalibrated
+        model outputs; detections are model findings, not proof. Example data is synthetic.
       </div>
     </main>
   );
