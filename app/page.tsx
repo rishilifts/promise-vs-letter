@@ -256,8 +256,8 @@ export default function Home() {
           <p className="plain-note">
             What gets checked: salary/stipend, fees/deposit, role/title, joining date, work location, training/probation, notice period - nothing else.
             Everything you paste or upload is sent to the Clocked API (Rezolve AI) for processing; their retention is unknown to us, so do not upload
-            documents you cannot share with a third party. This app itself stores nothing - your text and files stay in this browser tab and are used only
-            for the check you run. Results are model findings, not proof.
+            documents you cannot share with a third party. This app does not intentionally save your uploads to any disk or database; they are sent to the
+            Clocked API for the check you run. Results are model findings, not proof.
           </p>
         </>
       )}
@@ -265,7 +265,7 @@ export default function Home() {
 
       <div className="foot">
         Built on the Clocked API (extract, injection check, compare, rerank, grounding, pii). Uploaded content goes to Rezolve AI for processing
-        (retention unknown); this app stores nothing itself. Example data is synthetic.
+        (retention unknown); the app does not intentionally save uploads to disk or database. Example data is synthetic.
       </div>
     </main>
   );
