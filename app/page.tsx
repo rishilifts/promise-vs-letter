@@ -109,10 +109,27 @@ function Results({ r, sample }: { r: any; sample?: boolean }) {
         >
           {copied ? "Copied" : "Copy report"}
         </button>
+        {r.markedPdf && (
+          <a
+            className="ghost"
+            style={{ textDecoration: "none", display: "inline-block" }}
+            href={`data:application/pdf;base64,${r.markedPdf}`}
+            download="letter-highlighted.pdf"
+          >
+            Highlighted letter (PDF)
+          </a>
+        )}
         {Object.keys(r.maskedEntities || {}).length > 0 && (
           <span className="steps">masked: {Object.entries(r.maskedEntities).map(([k, v]) => `${v} ${k}`).join(", ")}</span>
         )}
       </div>
+
+      {r.markedPdf && (
+        <div className="note">
+          The highlighted letter comes from a single whole-document pass and may not mark every conflict listed above - the list is the
+          authoritative result.
+        </div>
+      )}
 
       <div className="note">
         Detected items only: a &quot;not detected&quot; result does not prove a term is fair, present or absent. Scores are uncalibrated model

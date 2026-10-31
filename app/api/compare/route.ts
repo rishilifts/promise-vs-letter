@@ -48,6 +48,17 @@ function fieldsPayload() {
   return out;
 }
 
+// Text extracts return {fields: {k: {value}}}; image extracts return {result: {k: value}}.
+function extractValues(data: any): Record<string, any> {
+  const out: Record<string, any> = {};
+  const src = data?.fields || data?.result || {};
+  for (const [k, v] of Object.entries(src)) {
+    if (v && typeof v === "object" && !Array.isArray(v) && "value" in (v as any)) out[k] = (v as any).value;
+    else out[k] = v;
+  }
+  return out;
+}
+
 function normVal(v: any): string {
   if (v == null) return "";
   if (Array.isArray(v)) return v.filter(Boolean).join("; ");
@@ -96,10 +107,6 @@ export async function POST(req: NextRequest) {
       const g = await clocked("injection", { text: letterText }); track(g);
       if (g.data?.verdict !== "benign") return NextResponse.json({ error: "The letter text looks like it contains injected instructions. Please paste only the letter." }, { status: 422 });
     }
-    if (promiseImgUrl) {
-      const g = await clocked("injection", { images: [promiseImgUrl] }); track(g);
-      if (g.data?.verdict !== "benign") return NextResponse.json({ error: "The screenshot looks like it contains injected instructions." }, { status: 422 });
-    }
 
     // 2. Extract the same fields from both sides.
     const promiseReq: Record<string, any> = { fields: fieldsPayload(), instructions: PROMISE_INSTRUCTIONS };
@@ -112,8 +119,19 @@ export async function POST(req: NextRequest) {
 
     const pe = await clocked("extract", promiseReq); track(pe);
     const le = await clocked("extract", letterReq); track(le);
-    const pFields = pe.data?.result || {};
-    const lFields = le.data?.result || {};
+    const pFields = extractValues(pe.data);
+    const lFields = extractValues(le.data);
+
+    // Guard the extracted values from image/PDF inputs - this is the text that
+    // actually enters the downstream prompts (image-modality guard false-positives
+    // on ordinary chat screenshots).
+    if (promiseImgUrl || promisePdfB64 || letterPdfB64) {
+      const joined = [...Object.values(pFields), ...Object.values(lFields)].filter(Boolean).join("\n");
+      if (joined) {
+        const g = await clocked("injection", { text: joined }); track(g);
+        if (g.data?.verdict !== "benign") return NextResponse.json({ error: "The uploaded file looks like it contains injected instructions. Please check the file and try again." }, { status: 422 });
+      }
+    }
 
     // 3. Per-field comparison.
     const conflicts: any[] = [];
@@ -189,6 +207,31 @@ export async function POST(req: NextRequest) {
       } catch { c.letterGrounded = null; }
     }
 
+    // 5b. Highlighted PDF of the letter (only when the letter was a PDF upload).
+    // Note: the highlighting pass is a single whole-document compare; it can miss
+    // a conflict that the per-field pass above caught, so it is labeled as such.
+    let markedPdf: string | null = null;
+    if (letterPdfB64) {
+      try {
+        const pSide = promiseText.trim() || Object.entries(pFields).map(([k, v]) => `${k}: ${v}`).join("\n");
+        const mc = await clocked("compare", {
+          documents: [
+            { id: "promise", text: pSide },
+            { id: "letter", pdf: letterPdfB64 },
+          ],
+          instructions: "Document 1 is the recruiter's chat promise, document 2 is the formal offer letter. Flag every conflict in money, dates, role, location, or terms, quoting both sides.",
+          evidence: "all",
+          return_pdf: "highlight",
+        });
+        track(mc);
+        const pdfObj: any = mc.data?.pdf;
+        const objs: any[] = Array.isArray(pdfObj) ? pdfObj : pdfObj ? [pdfObj] : [];
+        for (const o of objs) {
+          if (typeof o?.marked?.document === "string") { markedPdf = o.marked.document; break; }
+        }
+      } catch { markedPdf = null; }
+    }
+
     // 6. Build the report, then mask personal details for sharing.
     const lines: string[] = ["Promise vs Letter - conflict report", ""];
     capped.forEach((c, i) => {
@@ -223,6 +266,7 @@ export async function POST(req: NextRequest) {
       report,
       maskedReport,
       maskedEntities,
+      markedPdf,
       creditsUsed: totalCredits,
     });
   } catch (err: any) {
