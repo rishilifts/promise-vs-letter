@@ -76,10 +76,33 @@ async function fileToB64(f: File): Promise<string> {
   return buf.toString("base64");
 }
 
+// Best-effort abuse control for the public deployment (module-level state is
+// per serverless instance, so this bounds casual abuse, not a determined one).
+// The Clocked account itself has overage disabled, so spend can never exceed
+// the remaining free trial credits.
+const PER_IP_MAX_RUNS = 5;
+const RATE_WINDOW_MS = 60 * 60 * 1000;
+const DAILY_CREDIT_CAP = Number(process.env.PUBLIC_DAILY_CREDIT_CAP || 800);
+const ipHits = new Map<string, { count: number; reset: number }>();
+let dayStart = Date.now();
+let dayCredits = 0;
+
 export async function POST(req: NextRequest) {
   if (!KEY) return NextResponse.json({ error: "Server is not configured (missing API key)." }, { status: 500 });
+  const ip = (req.headers.get("x-forwarded-for") || "unknown").split(",")[0].trim();
+  const now = Date.now();
+  if (now - dayStart > 24 * 60 * 60 * 1000) { dayStart = now; dayCredits = 0; }
+  if (dayCredits >= DAILY_CREDIT_CAP) {
+    return NextResponse.json({ error: "The public demo's daily limit is reached - it protects a finite free API budget. Please try again tomorrow." }, { status: 429, headers: { "Cache-Control": "no-store" } });
+  }
+  const hit = ipHits.get(ip);
+  if (hit && now < hit.reset && hit.count >= PER_IP_MAX_RUNS) {
+    return NextResponse.json({ error: "Too many checks from this connection - please try again in about an hour." }, { status: 429, headers: { "Cache-Control": "no-store" } });
+  }
+  if (!hit || now >= hit.reset) ipHits.set(ip, { count: 1, reset: now + RATE_WINDOW_MS });
+  else hit.count += 1;
   let totalCredits = 0;
-  const track = (r: ClockResult) => { totalCredits += r.credits || 0; };
+  const track = (r: ClockResult) => { totalCredits += r.credits || 0; dayCredits += r.credits || 0; };
   try {
     const form = await req.formData();
     const promiseText = String(form.get("promiseText") || "").slice(0, MAX_TEXT);
@@ -261,7 +284,7 @@ export async function POST(req: NextRequest) {
       maskedReport,
       maskedEntities,
       creditsUsed: totalCredits,
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (err: any) {
     return NextResponse.json({ error: err?.message || "Comparison failed." }, { status: 502 });
   }
