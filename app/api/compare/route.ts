@@ -96,7 +96,15 @@ export async function POST(req: NextRequest) {
     }
   };
   try {
-    const form = await req.formData();
+    let form: FormData;
+    try {
+      form = await req.formData();
+    } catch {
+      return NextResponse.json(
+        { error: "Send the promise and letter as form fields (promiseText/letterText or a file upload)." },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
+      );
+    }
     const promiseText = String(form.get("promiseText") || "").slice(0, MAX_TEXT);
     const letterText = String(form.get("letterText") || "").slice(0, MAX_TEXT);
     const promiseImage = form.get("promiseImage");
