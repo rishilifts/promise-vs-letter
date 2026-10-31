@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkPerIp, clientIp, reserveDaily, settleReservation } from "../../../lib/limits";
+import { checkPerIp, clientIp, reserveDaily, settleReservation, WORST_CASE_RUN_CREDITS } from "../../../lib/limits";
 
 const BASE = "https://clocked.rezolve.ai/clocked";
 const KEY = process.env.CLOCKED_API_KEY || "";
@@ -81,6 +81,19 @@ async function fileToB64(f: File): Promise<string> {
 // closed on Netlify when the store is unavailable - see lib/limits.ts.
 export async function POST(req: NextRequest) {
   if (!KEY) return NextResponse.json({ error: "Server is not configured (missing API key)." }, { status: 500 });
+  // Live processing is restricted to owner-authorized testing: the shared
+  // counter store's conditional writes are not honored atomically by the
+  // hosting backend (verified 2026-10-31), so no free reliable atomic daily
+  // cap exists. Public visitors get the synthetic demo; the per-IP and daily
+  // limiters below still guard key-holder traffic as best-effort defense in
+  // depth, and the Clocked trial account (overage off) remains the hard floor.
+  const ownerKey = process.env.OWNER_ACCESS_KEY || "";
+  if (!ownerKey || req.headers.get("x-owner-key") !== ownerKey) {
+    return NextResponse.json(
+      { error: "Live checking is paused on this public demo. Load the synthetic example to see how it works." },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    );
+  }
   const ip = clientIp(req.headers);
   const perIp = await checkPerIp(ip);
   if (!perIp.ok) {
@@ -88,7 +101,12 @@ export async function POST(req: NextRequest) {
   }
   let totalCredits = 0;
   let reservationKey: string | null = null;
-  const track = (r: ClockResult) => { totalCredits += r.credits || 0; };
+  const track = (r: ClockResult) => {
+    totalCredits += r.credits || 0;
+    if (totalCredits > WORST_CASE_RUN_CREDITS) {
+      throw new Error("This check used more processing than expected and was stopped. Please try again with shorter documents.");
+    }
+  };
   try {
     const form = await req.formData();
     const promiseText = String(form.get("promiseText") || "").slice(0, MAX_TEXT);
@@ -102,15 +120,15 @@ export async function POST(req: NextRequest) {
     const letterPdfB64 = letterPdf instanceof File && letterPdf.size > 0 ? await fileToB64(letterPdf) : null;
 
     // Validate uploads before any paid call.
-    const MAX_BYTES = 10 * 1024 * 1024;
+    const MAX_BYTES = 4 * 1024 * 1024;
     if (promiseImage instanceof File && promiseImage.size > 0) {
       if (!["image/png", "image/jpeg", "image/webp"].includes(promiseImage.type)) return NextResponse.json({ error: "Screenshot must be a PNG, JPEG or WebP image." }, { status: 400 });
-      if (promiseImage.size > MAX_BYTES) return NextResponse.json({ error: "Screenshot is too large (10 MB max)." }, { status: 400 });
+      if (promiseImage.size > MAX_BYTES) return NextResponse.json({ error: "Screenshot is too large (4 MB max)." }, { status: 400 });
     }
     for (const f of [promisePdf, letterPdf]) {
       if (f instanceof File && f.size > 0) {
         if (f.type !== "application/pdf") return NextResponse.json({ error: "Letter upload must be a PDF file." }, { status: 400 });
-        if (f.size > MAX_BYTES) return NextResponse.json({ error: "PDF is too large (10 MB max)." }, { status: 400 });
+        if (f.size > MAX_BYTES) return NextResponse.json({ error: "PDF is too large (4 MB max)." }, { status: 400 });
       }
     }
 
